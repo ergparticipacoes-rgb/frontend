@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(net start:*)",
+      "Bash(npm start)",
+      "Bash(set DISABLE_REDIS=true)",
+      "Bash(npm run dev:*)",
+      "Bash(powershell:*)",
+      "Bash(start cmd /k \"npm run dev\")",
+      "Bash(npm install)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,393 @@
+# Kubernetes deployment para sistema Litoral escalável
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: litoral
+---
+# ConfigMap para configurações
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litoral-config
+  namespace: litoral
+data:
+  NODE_ENV: "production"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  MONGODB_URI: "mongodb://mongo-service:27017/litoral"
+---
+# Secret para dados sensíveis
+apiVersion: v1
+kind: Secret
+metadata:
+  name: litoral-secrets
+  namespace: litoral
+type: Opaque
+data:
+  # Base64 encoded values
+  JWT_SECRET: "c2VjcmV0LWtleS1oZXJl" # secret-key-here
+  MONGODB_PASSWORD: "cGFzc3dvcmQ="         # password
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: litoral
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: litoral
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+# MongoDB Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  namespace: litoral
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:7
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: "admin"
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: litoral-secrets
+              key: MONGODB_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: mongodb-data
+          mountPath: /data/db
+      volumes:
+      - name: mongodb-data
+        persistentVolumeClaim:
+          claimName: mongodb-pvc
+---
+# MongoDB PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-pvc
+  namespace: litoral
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# MongoDB Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-service
+  namespace: litoral
+spec:
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litoral-api
+  namespace: litoral
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: litoral-api
+  template:
+    metadata:
+      labels:
+        app: litoral-api
+    spec:
+      containers:
+      - name: api
+        image: litoral/api:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: ENABLE_CLUSTERING
+          value: "false"
+        envFrom:
+        - configMapRef:
+            name: litoral-config
+        - secretRef:
+            name: litoral-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: litoral-api-service
+  namespace: litoral
+spec:
+  selector:
+    app: litoral-api
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: ClusterIP
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litoral-frontend
+  namespace: litoral
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: litoral-frontend
+  template:
+    metadata:
+      labels:
+        app: litoral-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: litoral/frontend:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: litoral-frontend-service
+  namespace: litoral
+spec:
+  selector:
+    app: litoral-frontend
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+---
+# Nginx Load Balancer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-lb
+  namespace: litoral
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-lb
+  template:
+    metadata:
+      labels:
+        app: nginx-lb
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+---
+# Nginx ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: litoral
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        upstream api {
+            server litoral-api-service:5000;
+        }
+        upstream frontend {
+            server litoral-frontend-service:80;
+        }
+        server {
+            listen 80;
+            location /api/ {
+                proxy_pass http://api;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+            location / {
+                proxy_pass http://frontend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+            }
+        }
+    }
+---
+# Nginx Service (LoadBalancer)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-lb-service
+  namespace: litoral
+spec:
+  selector:
+    app: nginx-lb
+  ports:
+  - port: 80
+    targetPort: 80
+  type: LoadBalancer
+---
+# HPA para API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: litoral-api-hpa
+  namespace: litoral
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: litoral-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# HPA para Frontend
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: litoral-frontend-hpa
+  namespace: litoral
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: litoral-frontend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # Redis para cache distribuído
+  redis:
+    image: redis:7-alpine
+    container_name: litoral-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+  # MongoDB
+  mongodb:
+    image: mongo:7
+    container_name: litoral-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: litoral
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+  # API Server (múltiplas instâncias para load balancing)
+  api-server-1:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: litoral-api-1
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://admin:password123@mongodb:27017/litoral?authSource=admin
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=your-super-secret-jwt-key-here
+      - CLUSTER_WORKER_ID=1
+    depends_on:
+      - mongodb
+      - redis
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+  api-server-2:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: litoral-api-2
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://admin:password123@mongodb:27017/litoral?authSource=admin
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=your-super-secret-jwt-key-here
+      - CLUSTER_WORKER_ID=2
+    depends_on:
+      - mongodb
+      - redis
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+  # Nginx Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: litoral-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - api-server-1
+      - api-server-2
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: litoral-frontend
+    environment:
+      - VITE_API_URL=http://nginx
+    depends_on:
+      - nginx
+    restart: unless-stopped
+    networks:
+      - litoral-network
+
+volumes:
+  redis_data:
+  mongodb_data:
+
+networks:
+  litoral-network:
+    driver: bridge

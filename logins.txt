@@ -1,0 +1,18 @@
+### 👤 Usuário Administrador
+- Email: admin@litoral.com
+- Senha: senha123
+- Tipo: Admin
+- Nome: Admin Litoral
+- Telefone: (47) 99999-9999
+- Cidade: Balneário Camboriú
+- Status: Aprovado ✅
+### 🏢 Usuário Corretor
+- Email: corretor@litoral.com
+- Senha: senha123
+- Tipo: Corretoria
+- Nome: Corretor Silva
+- Telefone: (47) 88888-8888
+- Cidade: Balneário Camboriú
+- CRECI: 12345-SC
+- Plano: Premium
+- Status: Aprovado ✅
